@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Core System | 1Cr/365d</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { background: #0b0f1a; color: #e2e8f0; font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .card { background: #161b2a; border: 1px solid #2d3748; border-radius: 16px; padding: 24px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
+        input { background: #1f2937; border: 1px solid #374151; color: white; padding: 10px; border-radius: 8px; transition: all 0.2s; width: 100%; }
+        input:focus { border-color: #3b82f6; outline: none; background: #2d3748; }
+        .btn-delete { color: #475569; padding: 0 10px; font-weight: bold; font-size: 1.2rem; transition: color 0.2s; cursor: pointer; }
+        .btn-delete:hover { color: #ef4444; }
+        /* Hide scrollbar for clean UI */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0b0f1a; }
+        ::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 3px; }
+    </style>
+</head>
+<body class="p-4 md:p-8 max-w-6xl mx-auto pb-24">
+
+    <!-- Header & Navigation -->
+    <div class="flex justify-between items-center mb-8 bg-[#161b2a] p-4 rounded-2xl border border-slate-800 shadow-lg">
+        <button onclick="changeDate(-1)" class="text-2xl px-4 py-2 hover:bg-slate-800 rounded-lg transition">←</button>
+        <h1 id="displayDate" class="text-xl md:text-2xl font-black uppercase tracking-widest text-white">Today</h1>
+        <button onclick="changeDate(1)" class="text-2xl px-4 py-2 hover:bg-slate-800 rounded-lg transition">→</button>
+    </div>
+
+    <!-- Core Metrics -->
+    <div class="grid grid-cols-3 gap-4 md:gap-6 mb-8">
+        <div class="card text-center border-t-4 border-t-blue-500">
+            <p class="text-xs text-slate-400 font-bold uppercase tracking-wider mb-2">Total Eaten</p>
+            <p id="statEaten" class="text-3xl md:text-5xl font-black text-blue-500">0</p>
+        </div>
+        <div id="remainingCard" class="card text-center border-t-4 border-t-green-400">
+            <p class="text-xs text-slate-400 font-bold uppercase tracking-wider mb-2">Remaining</p>
+            <p id="statRemaining" class="text-3xl md:text-5xl font-black text-green-400">0</p>
+        </div>
+        <div class="card text-center border-t-4 border-t-purple-500">
+            <p class="text-xs text-slate-400 font-bold uppercase tracking-wider mb-2">Daily Goal</p>
+            <input id="goalInput" type="number" class="text-center bg-transparent border-none p-0 text-3xl md:text-5xl font-black text-white focus:ring-0" onchange="updateGoal(this.value)">
+        </div>
+    </div>
+
+    <!-- Main Workspace -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        
+        <!-- Left Column: Meal Log -->
+        <div class="card lg:col-span-5 h-fit">
+            <div class="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
+                <h2 class="text-xl font-black uppercase italic tracking-wide">Fuel / Meals</h2>
+                <button onclick="addMeal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition shadow-lg shadow-blue-900/50">+ Add Item</button>
+            </div>
+            <div id="mealList" class="space-y-4"></div>
+        </div>
+
+        <!-- Middle Column: Visuals (Donut & History) -->
+        <div class="space-y-8 lg:col-span-7 h-fit">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <!-- Live Donut Chart -->
+                <div class="card flex flex-col items-center justify-center">
+                    <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-6 w-full text-left">Live Breakdown</h3>
+                    <div class="w-56 h-56 relative">
+                        <canvas id="donutChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Exercise Log -->
+                <div class="card">
+                    <div class="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
+                        <h2 class="text-xl font-black uppercase italic tracking-wide">Output</h2>
+                        <button onclick="addExercise()" class="text-purple-400 hover:text-purple-300 font-bold text-sm transition">+ Log</button>
+                    </div>
+                    <div id="exerciseList" class="space-y-4 max-h-[250px] overflow-y-auto pr-2"></div>
+                </div>
+            </div>
+
+            <!-- 7-Day History Chart -->
+            <div class="card">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider">7-Day Trajectory</h3>
+                    <div class="flex items-center gap-2 text-xs font-bold text-slate-400">
+                        <span class="w-3 h-3 rounded-full bg-green-500"></span> Under
+                        <span class="w-3 h-3 rounded-full bg-red-500 ml-2"></span> Over
+                    </div>
+                </div>
+                <div class="w-full h-48">
+                    <canvas id="historyChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // === CORE CONFIGURATION ===
+        const SUPABASE_URL = 'https://lmvssagvffdtqeconreh.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_xylffMVzOWUZYSgo_xbPJw_g9-jvAhk';
+        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        // Get local date string cleanly (YYYY-MM-DD) avoiding timezone shifts
+        const getLocalDate = (d) => {
+            const offset = d.getTimezoneOffset() * 60000;
+            return (new Date(d - offset)).toISOString().split('T')[0];
+        };
+
+        let currentDate = getLocalDate(new Date());
+        let dailyGoal = 2500;
+        let donutChart = null;
+        let historyChart = null;
+
+        // === INITIALIZATION ===
+        async function init() {
+            await fetchSettings();
+            await loadDayData();
+            await loadHistoryData();
+        }
+
+        async function fetchSettings() {
+            const { data, error } = await supabase.from('settings').select('*').single();
+            if (data && data.daily_goal) {
+                dailyGoal = data.daily_goal;
+                document.getElementById('goalInput').value = dailyGoal;
+            } else if (error) {
+                // Failsafe if settings table is empty
+                await supabase.from('settings').insert({ id: 1, daily_goal: 2500 });
+            }
+        }
+
+        async function updateGoal(val) {
+            dailyGoal = parseInt(val) || 2500;
+            await supabase.from('settings').upsert({ id: 1, daily_goal: dailyGoal });
+            updateUI(currentMeals); // Instantly update visuals
+            loadHistoryData(); // Update the purple line on the history chart
+        }
+
+        // === DAILY DATA (MEALS & EXERCISE) ===
+        let currentMeals = [];
+
+        async function loadDayData() {
+            const { data: meals } = await supabase.from('meals').select('*').eq('date', currentDate).order('created_at', { ascending: true });
+            const { data: exercises } = await supabase.from('exercises').select('*').eq('date', currentDate).order('created_at', { ascending: true });
+            
+            currentMeals = meals || [];
+            renderMeals(currentMeals);
+            renderExercises(exercises || []);
+            updateUI(currentMeals);
+        }
+
+        function renderMeals(meals) {
+            const html = meals.map(m => `
+                <div class="flex gap-3 items-center group">
+                    <span onclick="deleteRow('meals', '${m.id}')" class="btn-delete opacity-50 group-hover:opacity-100">×</span>
+                    <input class="flex-1 font-bold tracking-wide" placeholder="E.g., Paneer Tikka..." value="${m.name || ''}" onchange="updateRow('meals', '${m.id}', 'name', this.value)">
+                    <div class="relative w-28">
+                        <input class="w-full text-right pr-3 font-black text-blue-100 bg-slate-800" type="number" placeholder="0" value="${m.calories || ''}" onchange="updateRow('meals', '${m.id}', 'calories', this.value)">
+                    </div>
+                </div>
+            `).join('');
+            document.getElementById('mealList').innerHTML = html || '<p class="text-slate-600 text-sm italic text-center py-4">No fuel logged today.</p>';
+        }
+
+        function renderExercises(exs) {
+            const html = exs.map(e => `
+                <div class="bg-slate-800/60 p-4 rounded-xl border border-slate-700 relative group">
+                    <button onclick="deleteRow('exercises', '${e.id}')" class="absolute top-2 right-2 btn-delete text-sm opacity-50 group-hover:opacity-100">×</button>
+                    <input class="bg-transparent border-none p-0 font-black text-white w-[90%] mb-3 focus:ring-0" value="${e.name || ''}" placeholder="Workout Type..." onchange="updateRow('exercises', '${e.id}', 'name', this.value)">
+                    <div class="flex gap-3">
+                        <input class="w-1/2 text-sm bg-slate-900 border-none" value="${e.duration || ''}" placeholder="Time (e.g. 45m)" onchange="updateRow('exercises', '${e.id}', 'duration', this.value)">
+                        <input class="w-1/2 text-sm bg-slate-900 border-none text-purple-300 font-bold" type="number" value="${e.calories_burned || ''}" placeholder="Cals Burned" onchange="updateRow('exercises', '${e.id}', 'calories_burned', this.value)">
+                    </div>
+                </div>
+            `).join('');
+            document.getElementById('exerciseList').innerHTML = html || '<p class="text-slate-600 text-sm italic py-2">Rest day?</p>';
+        }
+
+        // === DATABASE OPERATIONS ===
+        async function addMeal() {
+            await supabase.from('meals').insert({ date: currentDate, name: '', calories: null });
+            loadDayData();
+        }
+
+        async function addExercise() {
+            await supabase.from('exercises').insert({ date: currentDate, name: '', duration: '', calories_burned: null });
+            loadDayData();
+        }
+
+        async function updateRow(table, id, field, value) {
+            const upd = {}; 
+            upd[field] = value === '' ? null : value;
+            await supabase.from(table).update(upd).eq('id', id);
+            await loadDayData();
+            if(table === 'meals') loadHistoryData(); // Refresh history bar chart
+        }
+
+        async function deleteRow(table, id) {
+            await supabase.from(table).delete().eq('id', id);
+            await loadDayData();
+            if(table === 'meals') loadHistoryData(); // Refresh history bar chart
+        }
+
+        // === UI & CHARTS ===
+        function updateUI(meals) {
+            const total = meals.reduce((sum, m) => sum + (parseInt(m.calories) || 0), 0);
+            const remaining = dailyGoal - total;
+            
+            document.getElementById('statEaten').innerText = total;
+            document.getElementById('statRemaining').innerText = remaining;
+            
+            // Dynamic styling for remaining calories
+            const remEl = document.getElementById('statRemaining');
+            const remCard = document.getElementById('remainingCard');
+            if (remaining < 0) {
+                remEl.className = "text-3xl md:text-5xl font-black text-red-500";
+                remCard.className = "card text-center border-t-4 border-t-red-500";
+            } else {
+                remEl.className = "text-3xl md:text-5xl font-black text-green-400";
+                remCard.className = "card text-center border-t-4 border-t-green-400";
+            }
+            
+            const todayStr = getLocalDate(new Date());
+            let displayStr = currentDate;
+            if (currentDate === todayStr) displayStr = "Today";
+            else {
+                const parts = currentDate.split('-');
+                displayStr = `${parts[2]}/${parts[1]}/${parts[0]}`; // DD/MM/YYYY
+            }
+            document.getElementById('displayDate').innerText = displayStr;
+            
+            updateDonut(meals, total);
+        }
+
+        function updateDonut(meals, total) {
+            const ctx = document.getElementById('donutChart').getContext('2d');
+            const data = meals.filter(m => parseInt(m.calories) > 0).map(m => parseInt(m.calories));
+            const labels = meals.filter(m => parseInt(m.calories) > 0).map(m => m.name || 'Unnamed');
+            
+            let bgColors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#0ea5e9', '#6366f1'];
+            
+            if (total < dailyGoal) {
+                data.push(dailyGoal - total);
+                labels.push('Remaining');
+                bgColors.push('#1e293b'); // Dark grey for empty space
+            }
+
+            if (donutChart) donutChart.destroy();
+            donutChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: bgColors,
+                        borderWidth: 0,
+                        hoverOffset: 5
+                    }]
+                },
+                options: { 
+                    plugins: { legend: { display: false }, tooltip: { enabled: true } }, 
+                    cutout: '80%',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: { duration: 500 }
+                }
+            });
+        }
+
+        // === 7-DAY HISTORY LOGIC ===
+        async function loadHistoryData() {
+            // Generate the last 7 dates locally
+            let dateArray = [];
+            let dateLabels = [];
+            for (let i = 6; i >= 0; i--) {
+                let d = new Date();
+                d.setDate(d.getDate() - i);
+                let dateStr = getLocalDate(d);
+                dateArray.push(dateStr);
+                
+                const parts = dateStr.split('-');
+                dateLabels.push(`${parts[2]}/${parts[1]}`); // DD/MM formatting
+            }
+            const oldestDate = dateArray[0];
+
+            // Fetch meals from oldest date to today
+            const { data } = await supabase.from('meals').select('date, calories').gte('date', oldestDate);
+            
+            // Group and aggregate
+            let groupedData = {};
+            dateArray.forEach(d => groupedData[d] = 0); // Initialize zero
+            
+            if (data) {
+                data.forEach(m => {
+                    if (groupedData[m.date] !== undefined) {
+                        groupedData[m.date] += parseInt(m.calories) || 0;
+                    }
+                });
+            }
+
+            const values = dateArray.map(d => groupedData[d]);
+            
+            // Bar colors: Green if under/equal to goal, Red if over
+            const barColors = values.map(v => v <= dailyGoal ? '#22c55e' : '#ef4444');
+
+            const ctx = document.getElementById('historyChart').getContext('2d');
+            if (historyChart) historyChart.destroy();
+            
+            historyChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: dateLabels,
+                    datasets: [
+                        {
+                            type: 'line',
+                            label: 'Goal',
+                            data: Array(7).fill(dailyGoal),
+                            borderColor: '#a855f7', // Purple target line
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            fill: false,
+                            tension: 0
+                        },
+                        {
+                            type: 'bar',
+                            label: 'Calories',
+                            data: values,
+                            backgroundColor: barColors,
+                            borderRadius: 6,
+                            borderSkipped: false
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { 
+                            beginAtZero: true, 
+                            grid: { color: '#1e293b', drawBorder: false },
+                            ticks: { color: '#64748b' }
+                        },
+                        x: { 
+                            grid: { display: false },
+                            ticks: { color: '#64748b', font: { weight: 'bold' } }
+                        }
+                    }
+                }
+            });
+        }
+
+        // === NAVIGATION ===
+        function changeDate(days) {
+            let d = new Date(currentDate);
+            d.setDate(d.getDate() + days);
+            currentDate = getLocalDate(d);
+            loadDayData();
+        }
+
+        // Boot up
+        init();
+    </script>
+</body>
+</html>
